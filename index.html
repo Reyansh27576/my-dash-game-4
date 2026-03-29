@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Dash: Ranked Edition</title>
+    <style>
+        body {
+            display: flex; flex-direction: column; align-items: center;
+            margin: 0; background-color: #1a1a1a; font-family: 'Segoe UI', sans-serif;
+            color: white; touch-action: manipulation; overflow-x: hidden;
+        }
+        /* New Progress Bar Styling */
+        #progressContainer {
+            width: 95vw; max-width: 800px; height: 20px;
+            background: #444; border-radius: 10px; margin-top: 10px; overflow: hidden;
+            border: 2px solid #555; position: relative;
+        }
+        #progressBar {
+            width: 0%; height: 100%; background: linear-gradient(90deg, #f1c40f, #e67e22);
+            transition: width 0.3s;
+        }
+        #rankText {
+            position: absolute; width: 100%; text-align: center;
+            font-size: 12px; font-weight: bold; line-height: 20px; color: white; text-shadow: 1px 1px 2px black;
+        }
+        canvas {
+            background-color: #3498db; margin-top: 10px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5); border-radius: 8px;
+            width: 95vw; max-width: 800px;
+        }
+        .ui-panel {
+            background: #2c3e50; padding: 15px; border-radius: 10px;
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px; width: 90vw; max-width: 770px; margin-top: 15px;
+        }
+        .stat-box { text-align: center; background: #34495e; padding: 10px; border-radius: 5px; }
+        button { 
+            padding: 10px; border: none; border-radius: 5px; cursor: pointer;
+            font-weight: bold; background: #27ae60; color: white; width: 100%;
+        }
+        input { width: 100%; }
+    </style>
+</head>
+<body>
+
+<div style="margin-top: 10px; font-size: 20px;">🏆 Best: <span id="bestScore">0</span></div>
+
+<div id="progressContainer">
+    <div id="progressBar"></div>
+    <div id="rankText">RANK: BRONZE</div>
+</div>
+
+<canvas id="gameCanvas" width="800" height="400"></canvas>
+
+<div class="ui-panel">
+    <div class="stat-box">
+        <label>Cube Color</label>
+        <input type="color" id="pColor" value="#f1c40f">
+    </div>
+    <div class="stat-box">
+        <label>Sky Color</label>
+        <input type="color" id="bgColor" value="#3498db">
+    </div>
+    <div class="stat-box">
+        <label>Gravity</label>
+        <input type="range" id="gravity" min="0.5" max="1.5" value="0.9" step="0.1">
+    </div>
+    <div class="stat-box" style="display:flex; align-items:center;">
+        <button onclick="copyScore()">📋 Copy Score</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const pColorInput = document.getElementById("pColor");
+    const bgColorInput = document.getElementById("bgColor");
+    const gravInput = document.getElementById("gravity");
+    const bestDisplay = document.getElementById("bestScore");
+    const progressBar = document.getElementById("progressBar");
+    const rankText = document.getElementById("rankText");
+
+    let frames = 0;
+    let score = 0;
+    let best = localStorage.getItem("dashBest") || 0;
+    bestDisplay.innerText = best;
+    let gameOver = false;
+    let gameSpeed = 6;
+    let obstacles = [];
+    let nextSpawn = 0;
+
+    const groundY = canvas.height - 50;
+
+    // Rank logic: Score needed for each rank
+    const ranks = [
+        { name: "BRONZE", limit: 10, color: "#cd7f32" },
+        { name: "SILVER", limit: 25, color: "#c0c0c0" },
+        { name: "GOLD", limit: 50, color: "#ffd700" },
+        { name: "PLATINUM", limit: 100, color: "#e5e4e2" },
+        { name: "DIAMOND", limit: 200, color: "#b9f2ff" },
+        { name: "LEGEND", limit: Infinity, color: "#ff00ff" }
+    ];
+
+    const player = {
+        x: 80, y: groundY - 40, size: 40, dy: 0, grounded: true,
+        jump: function() {
+            if (this.grounded) {
+                this.dy = -15;
+                this.grounded = false;
+            }
+        },
+        update: function() {
+            this.dy += parseFloat(gravInput.value);
+            this.y += this.dy;
+            if (this.y + this.size >= groundY) {
+                this.y = groundY - this.size;
+                this.dy = 0;
+                this.grounded = true;
+            }
+        },
+        draw: function() {
+            ctx.fillStyle = pColorInput.value;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.strokeStyle = "white"; ctx.strokeRect(this.x, this.y, this.size, this.size);
+        }
+    };
+
+    function updateRank() {
+        let currentRank = ranks[0];
+        let prevLimit = 0;
+        
+        for (let i = 0; i < ranks.length; i++) {
+            if (score < ranks[i].limit) {
+                currentRank = ranks[i];
+                prevLimit = i === 0 ? 0 : ranks[i-1].limit;
+                break;
+            }
+        }
+
+        rankText.innerText = `RANK: ${currentRank.name}`;
+        progressBar.style.background = currentRank.color;
+        
+        // Calculate percentage to next rank
+        let range = currentRank.limit - prevLimit;
+        let progress = ((score - prevLimit) / range) * 100;
+        progressBar.style.width = Math.min(progress, 100) + "%";
+    }
+
+    function spawnObstacle() {
+        const types = ['single', 'double', 'triple', 'tall'];
+        const type = types[Math.floor(Math.random() * types.length)];
+        let obs = { x: canvas.width, type: type };
+        
+        if (type === 'single') { obs.w = 40; obs.h = 40; }
+        else if (type === 'double') { obs.w = 80; obs.h = 40; }
+        else if (type === 'triple') { obs.w = 120; obs.h = 40; }
+        else if (type === 'tall') { obs.w = 40; obs.h = 75; }
+        
+        obstacles.push(obs);
+        nextSpawn = frames + Math.floor(Math.random() * 40) + (90 - Math.min(score * 2, 50));
+    }
+
+    function handleObstacles() {
+        if (frames >= nextSpawn) spawnObstacle();
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            let o = obstacles[i];
+            o.x -= gameSpeed;
+
+            ctx.fillStyle =
